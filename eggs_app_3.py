@@ -1,13 +1,11 @@
 import streamlit as st
+import json
 
 # ページの設定（スマホで見やすいようにワイドモードに設定）
 st.set_page_config(page_title="エッグスンシングス会計シミュレーター（さいたま新都心店）", layout="centered")
 
 st.title("🥞 Eggs 'n Things 会計シミュレーター")
 st.caption("さいたま新都心店メニュー完全網羅（10%税込）")
-
-# 1. 人数選択
-party_size = st.number_input("お店に行く人数 (人)", min_value=1, max_value=20, value=2, step=1)
 
 # 2. メニューデータの完全定義（さいたま新都心店グランドメニュー＆最新キッズメニュー）
 menu_data = {
@@ -152,9 +150,40 @@ menu_data = {
     }
 }
 
-# 選択されたアイテムの数量を保持するディクショナリ
+# --- 【機能追加①：前回の選択を復元する仕組み】 ---
+# URLパラメータ（query_params）から保存データを読み出す
+saved_order = {}
+if "saved_data" in st.query_params:
+    try:
+        saved_order = json.loads(st.query_params["saved_data"])
+    except:
+        pass
+
+# 初期人数を復元
+saved_party_size = int(st.query_params.get("party_size", 2))
+
+# セッション状態を初期化（保存データがあればそれを使い、なければ0）
 if "order" not in st.session_state:
     st.session_state.order = {}
+    for category, items in menu_data.items():
+        for item_name in items.keys():
+            st.session_state.order[item_name] = saved_order.get(item_name, 0)
+
+# --- 【機能追加②：リセットボタンの処理】 ---
+def reset_all():
+    # セッション内の注文をすべて0にする
+    for item_name in st.session_state.order.keys():
+        st.session_state.order[item_name] = 0
+    # URLの保存パラメータも削除
+    st.query_params.clear()
+
+# 1. 人数選択
+party_size = st.number_input("お店に行く人数 (人)", min_value=1, max_value=20, value=saved_party_size, step=1)
+
+# リセットボタンを人数選択の横（または下）に配置
+if st.button("🔄 選択をすべてリセットする", use_container_width=True, type="secondary"):
+    reset_all()
+    st.rerun()
 
 total_price = 0
 selected_items = []  # 現在選択されているアイテム（内訳表示用）
@@ -164,9 +193,6 @@ st.write("### 📋 メニューを選択")
 for category, items in menu_data.items():
     with st.expander(category):
         for item_name, price in items.items():
-            # session_stateの初期化
-            if item_name not in st.session_state.order:
-                st.session_state.order[item_name] = 0
             
             # スマホでも押しやすいように、横並びのレイアウトを作る
             col1, col2 = st.columns([3, 2])
@@ -174,12 +200,12 @@ for category, items in menu_data.items():
                 st.write(f"**{item_name}**")
                 st.caption(f"{price:,} 円")
             with col2:
-                # 数量を選択するコラム（増減ボタンが自動で付くnumber_inputを採用）
+                # 数量を選択するコラム
                 count = st.number_input(
                     "数量", 
                     min_value=0, 
                     max_value=20, 
-                    value=st.session_state.order[item_name], 
+                    value=st.session_state.order.get(item_name, 0), 
                     key=f"input_{item_name}",
                     label_visibility="collapsed"
                 )
@@ -197,6 +223,13 @@ for category, items in menu_data.items():
                 })
                 
             st.divider()
+
+# --- データの自動保存（変更があるたびにURLパラメータへ書き込み） ---
+# 数量が1以上のものだけを軽量化して保存
+active_orders = {k: v for k, v in st.session_state.order.items() if v > 0}
+st.query_params["saved_data"] = json.dumps(active_orders)
+st.query_params["party_size"] = party_size
+
 
 # 4. サイドバーの計算結果表示
 st.sidebar.markdown("## 💰 計算結果")
