@@ -1,4 +1,4 @@
-iimport streamlit as st
+import streamlit as st
 import json
 
 # ページの設定（スマホで見やすいようにワイドモードに設定）
@@ -150,8 +150,7 @@ menu_data = {
     }
 }
 
-# --- 【修正：状態管理と初期化ロジックの改善】 ---
-# URLパラメータから保存データをパースする
+# --- 【安定化の修正】起動時のデータ読み込み ---
 saved_order = {}
 if "saved_data" in st.query_params:
     try:
@@ -161,123 +160,14 @@ if "saved_data" in st.query_params:
 
 saved_party_size = int(st.query_params.get("party_size", 2))
 
-# st.session_state 側に値を一元化
+# 最初の一回だけセッション状態を初期化（クラッシュ防止のため一元管理）
+if "order" not in st.session_state:
+    st.session_state.order = {}
+    for category, items in menu_data.items():
+        for item_name in items.keys():
+            st.session_state.order[item_name] = saved_order.get(item_name, 0)
+
 if "party_size" not in st.session_state:
     st.session_state.party_size = saved_party_size
 
-# 各メニューの数量をセッション状態にセット（入力用widgetの初期値に直結させる）
-for category, items in menu_data.items():
-    for item_name in items.keys():
-        input_key = f"input_{item_name}"
-        if input_key not in st.session_state:
-            st.session_state[input_key] = saved_order.get(item_name, 0)
-
-# --- 【修正②：リセット処理の完全化】 ---
-def reset_all():
-    # 各入力フォーム(widget)のセッション値をすべて直接0にする
-    for category, items in menu_data.items():
-        for item_name in items.keys():
-            st.session_state[f"input_{item_name}"] = 0
-    st.session_state.party_size = 2
-    st.query_params.clear()
-
-# 1. 人数選択
-party_size = st.number_input(
-    "お店に行く人数 (人)", 
-    min_value=1, 
-    max_value=20, 
-    value=st.session_state.party_size, 
-    step=1,
-    key="party_size_input"
-)
-st.session_state.party_size = party_size
-
-# リセットボタン
-if st.button("🔄 選択をすべてリセットする", use_container_width=True, type="secondary"):
-    reset_all()
-    st.rerun()
-
-total_price = 0
-selected_items = []  # 内訳用リスト
-current_order_to_save = {} # 保存用の現在の注文状態
-
-# 3. UIの構築
-st.write("### 📋 メメニューを選択")
-for category, items in menu_data.items():
-    with st.expander(category):
-        for item_name, price in items.items():
-            input_key = f"input_{item_name}"
-            
-            col1, col2 = st.columns([3, 2])
-            with col1:
-                st.write(f"**{item_name}**")
-                st.caption(f"{price:,} 円")
-            with col2:
-                # valueではなく key を直接指定することで状態のズレを解消
-                count = st.number_input(
-                    "数量", 
-                    min_value=0, 
-                    max_value=20, 
-                    key=input_key,
-                    label_visibility="collapsed"
-                )
-            
-            # 合計金額の計算
-            total_price += price * count
-            
-            # 数量が1以上のものをカウント
-            if count > 0:
-                selected_items.append({
-                    "name": item_name,
-                    "count": count,
-                    "subtotal": price * count
-                })
-                current_order_to_save[item_name] = count
-                
-            st.divider()
-
-# --- 【修正①：変更のたびにリアルタイムでURLに同期保存】 ---
-st.query_params["saved_data"] = json.dumps(current_order_to_save)
-st.query_params["party_size"] = st.session_state.party_size
-
-
-# 4. サイドバーの計算結果表示
-st.sidebar.markdown("## 💰 計算結果")
-st.sidebar.markdown(f"### **合計金額: {total_price:,} 円 (税込)**")
-
-if party_size > 0:
-    per_person = int(total_price / party_size)
-    st.sidebar.markdown(f"### **1人あたり: {per_person:,} 円**")
-
-st.sidebar.caption(f"※現在の設定人数: {party_size} 名")
-
-# サイドバーの現在選択しているもの一覧
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 🛒 選択中のメニュー")
-if selected_items:
-    for item in selected_items:
-        st.sidebar.markdown(f"**{item['name']}** x {item['count']}")
-        st.sidebar.caption(f"小計: {item['subtotal']:,} 円")
-else:
-    st.sidebar.write("メニューが選択されていません")
-
-
-# メイン画面の下部
-st.write("---")
-st.subheader("🛒 現在の選択合計")
-st.metric(label="合計金額 (税込)", value=f"{total_price:,} 円")
-st.metric(label="1人あたりの目安", value=f"{int(total_price / party_size):,} 円")
-
-# メイン画面下部の現在選択しているもの一覧
-st.write("#### 📋 選択中のメニュー内訳")
-if selected_items:
-    for item in selected_items:
-        col_name, col_count, col_sub = st.columns([4, 1, 2])
-        with col_name:
-            st.write(item['name'])
-        with col_count:
-            st.write(f"x {item['count']}")
-        with col_sub:
-            st.write(f"{item['subtotal']:,} 円")
-else:
-    st.write("メニューが選択されていません")
+#
