@@ -1,4 +1,4 @@
-import streamlit as st
+iimport streamlit as st
 import json
 
 # ページの設定（スマホで見やすいようにワイドモードに設定）
@@ -150,8 +150,8 @@ menu_data = {
     }
 }
 
-# --- 【機能追加①：前回の選択を復元する仕組み】 ---
-# URLパラメータ（query_params）から保存データを読み出す
+# --- 【修正：状態管理と初期化ロジックの改善】 ---
+# URLパラメータから保存データをパースする
 saved_order = {}
 if "saved_data" in st.query_params:
     try:
@@ -159,76 +159,86 @@ if "saved_data" in st.query_params:
     except:
         pass
 
-# 初期人数を復元
 saved_party_size = int(st.query_params.get("party_size", 2))
 
-# セッション状態を初期化（保存データがあればそれを使い、なければ0）
-if "order" not in st.session_state:
-    st.session_state.order = {}
+# st.session_state 側に値を一元化
+if "party_size" not in st.session_state:
+    st.session_state.party_size = saved_party_size
+
+# 各メニューの数量をセッション状態にセット（入力用widgetの初期値に直結させる）
+for category, items in menu_data.items():
+    for item_name in items.keys():
+        input_key = f"input_{item_name}"
+        if input_key not in st.session_state:
+            st.session_state[input_key] = saved_order.get(item_name, 0)
+
+# --- 【修正②：リセット処理の完全化】 ---
+def reset_all():
+    # 各入力フォーム(widget)のセッション値をすべて直接0にする
     for category, items in menu_data.items():
         for item_name in items.keys():
-            st.session_state.order[item_name] = saved_order.get(item_name, 0)
-
-# --- 【機能追加②：リセットボタンの処理】 ---
-def reset_all():
-    # セッション内の注文をすべて0にする
-    for item_name in st.session_state.order.keys():
-        st.session_state.order[item_name] = 0
-    # URLの保存パラメータも削除
+            st.session_state[f"input_{item_name}"] = 0
+    st.session_state.party_size = 2
     st.query_params.clear()
 
 # 1. 人数選択
-party_size = st.number_input("お店に行く人数 (人)", min_value=1, max_value=20, value=saved_party_size, step=1)
+party_size = st.number_input(
+    "お店に行く人数 (人)", 
+    min_value=1, 
+    max_value=20, 
+    value=st.session_state.party_size, 
+    step=1,
+    key="party_size_input"
+)
+st.session_state.party_size = party_size
 
-# リセットボタンを人数選択の横（または下）に配置
+# リセットボタン
 if st.button("🔄 選択をすべてリセットする", use_container_width=True, type="secondary"):
     reset_all()
     st.rerun()
 
 total_price = 0
-selected_items = []  # 現在選択されているアイテム（内訳表示用）
+selected_items = []  # 内訳用リスト
+current_order_to_save = {} # 保存用の現在の注文状態
 
-# 3. UIの構築（アコーディオン形式）
-st.write("### 📋 メニューを選択")
+# 3. UIの構築
+st.write("### 📋 メメニューを選択")
 for category, items in menu_data.items():
     with st.expander(category):
         for item_name, price in items.items():
+            input_key = f"input_{item_name}"
             
-            # スマホでも押しやすいように、横並びのレイアウトを作る
             col1, col2 = st.columns([3, 2])
             with col1:
                 st.write(f"**{item_name}**")
                 st.caption(f"{price:,} 円")
             with col2:
-                # 数量を選択するコラム
+                # valueではなく key を直接指定することで状態のズレを解消
                 count = st.number_input(
                     "数量", 
                     min_value=0, 
                     max_value=20, 
-                    value=st.session_state.order.get(item_name, 0), 
-                    key=f"input_{item_name}",
+                    key=input_key,
                     label_visibility="collapsed"
                 )
-                st.session_state.order[item_name] = count
             
             # 合計金額の計算
             total_price += price * count
             
-            # 数量が1以上のものを内訳リストに追加
+            # 数量が1以上のものをカウント
             if count > 0:
                 selected_items.append({
                     "name": item_name,
                     "count": count,
                     "subtotal": price * count
                 })
+                current_order_to_save[item_name] = count
                 
             st.divider()
 
-# --- データの自動保存（変更があるたびにURLパラメータへ書き込み） ---
-# 数量が1以上のものだけを軽量化して保存
-active_orders = {k: v for k, v in st.session_state.order.items() if v > 0}
-st.query_params["saved_data"] = json.dumps(active_orders)
-st.query_params["party_size"] = party_size
+# --- 【修正①：変更のたびにリアルタイムでURLに同期保存】 ---
+st.query_params["saved_data"] = json.dumps(current_order_to_save)
+st.query_params["party_size"] = st.session_state.party_size
 
 
 # 4. サイドバーの計算結果表示
